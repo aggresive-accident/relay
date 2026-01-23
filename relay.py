@@ -1,16 +1,109 @@
 #!/usr/bin/env python3
 """
 relay - messages passed across time
+
+now with session memory:
+- tracks when sessions begin and end
+- remembers what happened in each session
+- knows how many claudes have passed through
 """
 
 import json
+import os
 import random
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# where the chain lives
+# where data lives
 DEFAULT_CHAIN = Path.home() / ".relay-chain.json"
+SESSIONS_FILE = Path.home() / ".relay-sessions.json"
+
+# session tracking
+def get_current_session_id() -> str:
+    """get a unique session ID based on process tree"""
+    # use parent PID as session marker - changes each terminal/claude session
+    ppid = os.getppid()
+    return f"session-{ppid}"
+
+
+def load_sessions() -> dict:
+    """load session history"""
+    if SESSIONS_FILE.exists():
+        try:
+            return json.loads(SESSIONS_FILE.read_text())
+        except:
+            return {"sessions": [], "current": None}
+    return {"sessions": [], "current": None}
+
+
+def save_sessions(data: dict):
+    """save session data"""
+    SESSIONS_FILE.write_text(json.dumps(data, indent=2))
+
+
+def start_session() -> dict:
+    """start or continue a session"""
+    data = load_sessions()
+    session_id = get_current_session_id()
+
+    # check if this is an existing session
+    for session in data["sessions"]:
+        if session["id"] == session_id:
+            session["last_active"] = datetime.now().isoformat()
+            session["message_count"] = session.get("message_count", 0) + 1
+            save_sessions(data)
+            return session
+
+    # new session
+    session = {
+        "id": session_id,
+        "number": len(data["sessions"]) + 1,
+        "started": datetime.now().isoformat(),
+        "last_active": datetime.now().isoformat(),
+        "message_count": 1,
+        "notes": [],
+    }
+    data["sessions"].append(session)
+    data["current"] = session_id
+    save_sessions(data)
+    return session
+
+
+def get_session_stats() -> dict:
+    """get statistics about sessions"""
+    data = load_sessions()
+    sessions = data["sessions"]
+
+    if not sessions:
+        return {"total_sessions": 0, "total_messages": 0}
+
+    total_messages = sum(s.get("message_count", 0) for s in sessions)
+
+    return {
+        "total_sessions": len(sessions),
+        "total_messages": total_messages,
+        "first_session": sessions[0]["started"] if sessions else None,
+        "last_session": sessions[-1]["started"] if sessions else None,
+    }
+
+
+def add_session_note(note: str):
+    """add a note to the current session"""
+    data = load_sessions()
+    session_id = get_current_session_id()
+
+    for session in data["sessions"]:
+        if session["id"] == session_id:
+            if "notes" not in session:
+                session["notes"] = []
+            session["notes"].append({
+                "time": datetime.now().isoformat(),
+                "note": note
+            })
+            save_sessions(data)
+            return True
+    return False
 
 # things to say when starting fresh
 OPENINGS = [
@@ -110,7 +203,7 @@ def display_chain(chain, last_n=None):
         print()
 
 
-def relay(chain_path=DEFAULT_CHAIN, show_only=False, show_last=None):
+def relay(chain_path=DEFAULT_CHAIN, show_only=False, show_last=None, custom_message=None):
     """the main act: read, add, persist"""
     chain = load_chain(chain_path)
 
@@ -121,12 +214,20 @@ def relay(chain_path=DEFAULT_CHAIN, show_only=False, show_last=None):
             display_chain(chain, show_last)
         return
 
+    # track session
+    session = start_session()
+
     # generate and add new message
-    message = generate_message(chain)
+    if custom_message:
+        message = custom_message
+    else:
+        message = generate_message(chain)
+
     entry = {
         "run": len(chain) + 1,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "message": message,
+        "session": session["number"],
     }
 
     chain.append(entry)
@@ -136,12 +237,91 @@ def relay(chain_path=DEFAULT_CHAIN, show_only=False, show_last=None):
     print("--- recent chain ---")
     display_chain(chain[-3:])
     print(f"chain length: {len(chain)}")
+    print(f"session: {session['number']} (message #{session['message_count']} in this session)")
     print(f"stored at: {chain_path}")
 
 
+def show_sessions():
+    """display session history"""
+    data = load_sessions()
+    sessions = data["sessions"]
+
+    if not sessions:
+        print("no sessions recorded yet")
+        return
+
+    print("=" * 50)
+    print(" SESSION HISTORY")
+    print("=" * 50)
+    print()
+
+    for session in sessions:
+        print(f"Session {session['number']}")
+        print(f"  started: {session['started']}")
+        print(f"  last active: {session.get('last_active', 'unknown')}")
+        print(f"  messages: {session.get('message_count', 0)}")
+
+        notes = session.get("notes", [])
+        if notes:
+            print(f"  notes:")
+            for note in notes[:3]:
+                print(f"    - {note['note'][:50]}")
+            if len(notes) > 3:
+                print(f"    ... and {len(notes) - 3} more")
+        print()
+
+    stats = get_session_stats()
+    print("-" * 50)
+    print(f"Total sessions: {stats['total_sessions']}")
+    print(f"Total messages across all sessions: {stats['total_messages']}")
+
+
 def main():
+    # handle session commands
+    if "--sessions" in sys.argv:
+        show_sessions()
+        return
+
+    if "--note" in sys.argv:
+        try:
+            idx = sys.argv.index("--note")
+            note = " ".join(sys.argv[idx + 1:])
+            if note:
+                start_session()  # ensure session exists
+                add_session_note(note)
+                print(f"note added: {note}")
+            else:
+                print("need a note to add")
+        except:
+            print("usage: relay --note <your note>")
+        return
+
+    if "--stats" in sys.argv:
+        stats = get_session_stats()
+        print("relay statistics:")
+        print(f"  sessions: {stats['total_sessions']}")
+        print(f"  messages: {stats['total_messages']}")
+        if stats.get('first_session'):
+            print(f"  first session: {stats['first_session']}")
+        if stats.get('last_session'):
+            print(f"  last session: {stats['last_session']}")
+        return
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("relay - messages passed across time")
+        print()
+        print("usage:")
+        print("  relay [message]           # add message to chain")
+        print("  relay --show              # show entire chain")
+        print("  relay --last N            # show last N messages")
+        print("  relay --sessions          # show session history")
+        print("  relay --note <text>       # add note to current session")
+        print("  relay --stats             # show statistics")
+        return
+
     show_only = "--show" in sys.argv
     show_last = None
+    custom_message = None
 
     if "--last" in sys.argv:
         try:
@@ -160,7 +340,13 @@ def main():
         except (IndexError, ValueError):
             pass
 
-    relay(chain_path, show_only, show_last)
+    # check for custom message (first arg that isn't a flag)
+    for arg in sys.argv[1:]:
+        if not arg.startswith("--"):
+            custom_message = arg
+            break
+
+    relay(chain_path, show_only, show_last, custom_message)
 
 
 if __name__ == "__main__":
