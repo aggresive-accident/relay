@@ -88,6 +88,49 @@ def get_session_stats() -> dict:
     }
 
 
+def get_chain_stats(chain_path=DEFAULT_CHAIN) -> dict:
+    """get comprehensive chain statistics"""
+    from collections import Counter
+
+    chain = load_chain(chain_path)
+
+    if not chain:
+        return {"empty": True, "count": 0}
+
+    # basic counts
+    stats = {
+        "empty": False,
+        "count": len(chain),
+        "first_message": chain[0].get("time") if chain else None,
+        "last_message": chain[-1].get("time") if chain else None,
+    }
+
+    # message length stats
+    msg_lengths = [len(m.get("message", "")) for m in chain]
+    stats["avg_message_length"] = sum(msg_lengths) / len(msg_lengths) if msg_lengths else 0
+    stats["shortest_message"] = min(msg_lengths) if msg_lengths else 0
+    stats["longest_message"] = max(msg_lengths) if msg_lengths else 0
+
+    # word frequency
+    all_words = []
+    for entry in chain:
+        msg = entry.get("message", "")
+        words = msg.lower().split()
+        all_words.extend([w for w in words if len(w) > 3])
+
+    word_counts = Counter(all_words)
+    stats["common_words"] = word_counts.most_common(10)
+    stats["unique_words"] = len(word_counts)
+    stats["total_words"] = len(all_words)
+
+    # session distribution
+    session_counts = Counter(m.get("session", 0) for m in chain)
+    stats["sessions_with_messages"] = len(session_counts)
+    stats["most_active_session"] = session_counts.most_common(1)[0] if session_counts else None
+
+    return stats
+
+
 def add_session_note(note: str):
     """add a note to the current session"""
     data = load_sessions()
@@ -297,14 +340,51 @@ def main():
         return
 
     if "--stats" in sys.argv:
-        stats = get_session_stats()
-        print("relay statistics:")
-        print(f"  sessions: {stats['total_sessions']}")
-        print(f"  messages: {stats['total_messages']}")
-        if stats.get('first_session'):
-            print(f"  first session: {stats['first_session']}")
-        if stats.get('last_session'):
-            print(f"  last session: {stats['last_session']}")
+        session_stats = get_session_stats()
+        chain_stats = get_chain_stats()
+
+        print("=" * 50)
+        print(" RELAY STATISTICS")
+        print("=" * 50)
+        print()
+
+        print("SESSIONS:")
+        print(f"  total sessions: {session_stats['total_sessions']}")
+        print(f"  session messages: {session_stats['total_messages']}")
+        if session_stats.get('first_session'):
+            print(f"  first session: {session_stats['first_session'][:19]}")
+        if session_stats.get('last_session'):
+            print(f"  last session: {session_stats['last_session'][:19]}")
+        print()
+
+        print("CHAIN:")
+        if chain_stats.get("empty"):
+            print("  chain is empty")
+        else:
+            print(f"  chain length: {chain_stats['count']} messages")
+            if chain_stats.get('first_message'):
+                print(f"  first message: {chain_stats['first_message']}")
+            if chain_stats.get('last_message'):
+                print(f"  last message: {chain_stats['last_message']}")
+            print()
+            print(f"  avg message length: {chain_stats['avg_message_length']:.0f} chars")
+            print(f"  shortest: {chain_stats['shortest_message']} chars")
+            print(f"  longest: {chain_stats['longest_message']} chars")
+            print()
+            print(f"  total words: {chain_stats['total_words']}")
+            print(f"  unique words: {chain_stats['unique_words']}")
+            print()
+            if chain_stats.get('common_words'):
+                print("  most common words:")
+                for word, count in chain_stats['common_words'][:5]:
+                    print(f"    '{word}' x{count}")
+            print()
+            if chain_stats.get('most_active_session'):
+                session, count = chain_stats['most_active_session']
+                print(f"  most active session: #{session} ({count} messages)")
+
+        print()
+        print("=" * 50)
         return
 
     if "--help" in sys.argv or "-h" in sys.argv:
