@@ -246,6 +246,87 @@ def display_chain(chain, last_n=None):
         print()
 
 
+def display_history(chain):
+    """show full chain history with session grouping and timeline"""
+    if not chain:
+        print("the chain is empty. nothing has been relayed yet.")
+        return
+
+    from collections import defaultdict
+    from itertools import groupby
+
+    print("=" * 60)
+    print(" RELAY HISTORY - full chain timeline")
+    print("=" * 60)
+    print()
+
+    # group by session
+    by_session = defaultdict(list)
+    for entry in chain:
+        session = entry.get("session", 0)
+        by_session[session].append(entry)
+
+    # also group by date for overview
+    by_date = defaultdict(list)
+    for entry in chain:
+        time_str = entry.get("time", "")
+        date = time_str.split(" ")[0] if " " in time_str else "unknown"
+        by_date[date].append(entry)
+
+    # show date overview first
+    print("TIMELINE OVERVIEW:")
+    print("-" * 40)
+    for date in sorted(by_date.keys()):
+        entries = by_date[date]
+        sessions = set(e.get("session", 0) for e in entries)
+        print(f"  {date}: {len(entries)} messages across {len(sessions)} session(s)")
+    print()
+
+    # show full chain grouped by session
+    print("FULL CHAIN BY SESSION:")
+    print("-" * 40)
+
+    for session_num in sorted(by_session.keys()):
+        entries = by_session[session_num]
+        print()
+        print(f"╔══ SESSION {session_num} ({len(entries)} messages) ══╗")
+
+        for i, entry in enumerate(entries):
+            run = entry.get("run", "?")
+            time = entry.get("time", "unknown")
+            msg = entry.get("message", "")
+
+            # show connector
+            if i < len(entries) - 1:
+                connector = "├"
+            else:
+                connector = "└"
+
+            print(f"  {connector}─[{run}] {time}")
+            # word wrap long messages
+            if len(msg) > 50:
+                words = msg.split()
+                lines = []
+                current = ""
+                for word in words:
+                    if len(current) + len(word) + 1 > 50:
+                        lines.append(current)
+                        current = word
+                    else:
+                        current = current + " " + word if current else word
+                if current:
+                    lines.append(current)
+                for line in lines:
+                    print(f"  │     {line}")
+            else:
+                print(f"  │     {msg}")
+
+    print()
+    print("=" * 60)
+    print(f" TOTAL: {len(chain)} messages across {len(by_session)} sessions")
+    print("=" * 60)
+
+
 def relay(chain_path=DEFAULT_CHAIN, show_only=False, show_last=None, custom_message=None):
     """the main act: read, add, persist"""
     chain = load_chain(chain_path)
@@ -325,6 +406,11 @@ def main():
         show_sessions()
         return
 
+    if "--history" in sys.argv:
+        chain = load_chain(DEFAULT_CHAIN)
+        display_history(chain)
+        return
+
     if "--note" in sys.argv:
         try:
             idx = sys.argv.index("--note")
@@ -394,6 +480,7 @@ def main():
         print("  relay [message]           # add message to chain")
         print("  relay --show              # show entire chain")
         print("  relay --last N            # show last N messages")
+        print("  relay --history           # view full chain with timeline and session grouping")
         print("  relay --sessions          # show session history")
         print("  relay --note <text>       # add note to current session")
         print("  relay --stats             # show statistics")
