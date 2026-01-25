@@ -246,6 +246,41 @@ def display_chain(chain, last_n=None):
         print()
 
 
+def search_chain(chain, query: str, limit: int = 20) -> list:
+    """Search chain entries by content."""
+    query_lower = query.lower()
+    results = []
+
+    for entry in chain:
+        msg = entry.get("message", "").lower()
+        if query_lower in msg:
+            results.append(entry)
+
+    # Return most recent matches first
+    return results[-limit:][::-1] if results else []
+
+
+def display_search_results(results: list, query: str):
+    """Display search results."""
+    if not results:
+        print(f"No entries found matching '{query}'")
+        return
+
+    print(f"Found {len(results)} entries matching '{query}':")
+    print("-" * 50)
+
+    for entry in results:
+        run = entry.get("run", "?")
+        time = entry.get("time", "unknown")
+        msg = entry.get("message", "")
+        session = entry.get("session", 0)
+
+        print(f"[{run}] ({time}) session {session}")
+        # Highlight the query in the message
+        print(f"    {msg}")
+        print()
+
+
 def display_history(chain):
     """show full chain history with session grouping and timeline"""
     if not chain:
@@ -425,6 +460,20 @@ def main():
             print("usage: relay --note <your note>")
         return
 
+    if "--search" in sys.argv:
+        try:
+            idx = sys.argv.index("--search")
+            query = " ".join(sys.argv[idx + 1:])
+            if query:
+                chain = load_chain(DEFAULT_CHAIN)
+                results = search_chain(chain, query)
+                display_search_results(results, query)
+            else:
+                print("usage: relay --search <query>")
+        except:
+            print("usage: relay --search <query>")
+        return
+
     if "--stats" in sys.argv:
         session_stats = get_session_stats()
         chain_stats = get_chain_stats()
@@ -480,6 +529,7 @@ def main():
         print("  relay [message]           # add message to chain")
         print("  relay --show              # show entire chain")
         print("  relay --last N            # show last N messages")
+        print("  relay --search <query>    # search chain entries by content")
         print("  relay --history           # view full chain with timeline and session grouping")
         print("  relay --sessions          # show session history")
         print("  relay --note <text>       # add note to current session")
